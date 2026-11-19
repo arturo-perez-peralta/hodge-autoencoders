@@ -89,43 +89,52 @@ class TwoDimensionalHodgeSparseAutoEncoder(nn.Module):
         chain_loss, harm_loss = self.compute_topological_losses(holes)
 
         mse_loss = F.mse_loss(x_hat, x)
-        l1_feat_loss = sum(
-            self.l1_feat[k] * features[k].abs().sum(dim=-1).mean()
-            for k in range(len(features))
-        )
-        l1_hole_loss = self.l1_hole * holes.abs().sum(dim=-1).mean()
+
+        f0, f2 = features[0], features[2]
+
+        l1_f0_raw = f0.abs().sum(dim=-1).mean()
+        l1_f2_raw = f2.abs().sum(dim=-1).mean()
+        l1_hole_raw = holes.abs().sum(dim=-1).mean()
+
+        l1_z_loss = self.l1_feat[0] * l1_f0_raw + self.l1_feat[1] * l1_f2_raw
+        l1_hole_loss = self.l1_hole * l1_hole_raw
+        boundary_l1 = sum(b.weight.abs().mean() for b in self.boundaries.values())
 
         loss = (
             mse_loss
             + self.reg_chain * chain_loss
             + self.reg_harm * harm_loss
-            + l1_feat_loss
+            + l1_z_loss
             + l1_hole_loss
+            + self.reg_boundary * boundary_l1
         )
-    
-    l0_f0 = (f0 > 0).float().sum(dim=-1).mean().item()
-    l0_f2 = (f2 > 0).float().sum(dim=-1).mean().item()
-    l0_hole = (holes > 0).float().sum(dim=-1).mean().item()
 
-    metrics = {
-        "loss/total": loss.item(),
-        "loss/mse": mse.item(),
-        "loss/chain": chain_loss.item(),
-        "loss/harm": harm_loss.item(),
-        "loss/l1_z": l1_z_loss.item(),
-        "loss/l1_hole": l1_hole_loss.item(),
-        "metrics/l0": l0_f0 + l0_f2 + l0_hole,
-        "metrics/l0_z": l0_f0 + l0_f2,
-        "metrics/l0_hole": l0_hole,
-        "l0/z_dim_0": l0_f0,
-        "l0/z_dim_2": l0_f2,
-        "l0/hole_dim_1": l0_hole,
-        "l1/z_dim_0": l1_f0_raw.item(),
-        "l1/z_dim_2": l1_f2_raw.item(),
-        "l1/hole_dim_1": l1_hole_raw.item(),
-    }
+        l0_f0 = (f0 > 0).float().sum(dim=-1).mean().item()
+        l0_f2 = (f2 > 0).float().sum(dim=-1).mean().item()
+        l0_hole = (holes > 0).float().sum(dim=-1).mean().item()
 
-    return loss, metrics
+        metrics = {
+            "loss/total": loss.item(),
+            "loss/mse": mse_loss.item(),
+            "loss/chain": chain_loss.item(),
+            "loss/harm": harm_loss.item(),
+            "loss/l1_z": l1_z_loss.item(),
+            "loss/l1_hole": l1_hole_loss.item(),
+            "loss/l1_boundary": boundary_l1.item(),
+            "metrics/l0": l0_f0 + l0_f2 + l0_hole,
+            "metrics/l0_z": l0_f0 + l0_f2,
+            "metrics/l0_hole": l0_hole,
+            "l0/z_dim_0": l0_f0,
+            "l0/z_dim_2": l0_f2,
+            "l0/hole_dim_1": l0_hole,
+            "l1/z_dim_0": l1_f0_raw.item(),
+            "l1/z_dim_2": l1_f2_raw.item(),
+            "l1/hole_dim_1": l1_hole_raw.item(),
+        }
+
+        feat = {"features": features, "holes": holes, "z": [f0, f2]}
+
+        return loss, metrics, x_hat, feat
 
     @torch.no_grad()
     def normalize_decoder_weights(self):
@@ -224,24 +233,23 @@ class HodgeSparseAutoEncoder(nn.Module):
         chain_loss, harm_loss = self.compute_topological_losses(holes)
 
         mse_loss = F.mse_loss(x_hat, x)
-        l1_z_loss = sum(
-            self.l1_feat[k] * z[k].abs().sum(dim=-1).mean()
-            for k in range(self.n_latent)
-        )
-        l1_hole_loss = sum(
-            self.l1_hole[k] * holes[k].abs().sum(dim=-1).mean()
-            for k in range(self.n_latent)
-        )
+
+        l1_z_raw = [z_k.abs().sum(dim=-1).mean() for z_k in z]
+        l1_hole_raw = [h_k.abs().sum(dim=-1).mean() for h_k in holes]
+
+        l1_z_loss = sum(self.l1_feat[k] * l1_z_raw[k] for k in range(self.n_latent))
+        l1_hole_loss = sum(self.l1_hole[k] * l1_hole_raw[k] for k in range(self.n_latent))
         boundary_l1 = sum(d.abs().mean() for d in self.boundaries)
-        
+
         loss = (
             mse_loss
             + self.reg_chain * chain_loss
             + self.reg_harm * harm_loss
             + l1_z_loss
             + l1_hole_loss
-            + self.reg_boundary * l1_boundary
+            + self.reg_boundary * boundary_l1
         )
+
         l0_z = [(z_k > 0).float().sum(dim=-1).mean().item() for z_k in z]
         l0_hole = [(h_k > 0).float().sum(dim=-1).mean().item() for h_k in holes]
 
@@ -252,6 +260,7 @@ class HodgeSparseAutoEncoder(nn.Module):
             "loss/harm": harm_loss.item(),
             "loss/l1_z": l1_z_loss.item(),
             "loss/l1_hole": l1_hole_loss.item(),
+            "loss/l1_boundary": boundary_l1.item(),
             "metrics/l0": sum(l0_z) + sum(l0_hole),
             "metrics/l0_z": sum(l0_z),
             "metrics/l0_hole": sum(l0_hole),
@@ -263,7 +272,9 @@ class HodgeSparseAutoEncoder(nn.Module):
             metrics[f"l1/z_dim_{k}"] = l1_z_raw[k].item()
             metrics[f"l1/hole_dim_{k}"] = l1_hole_raw[k].item()
 
-        return loss, metrics
+        feat = {"features": features, "holes": holes, "z": z}
+
+        return loss, metrics, x_hat, feat
 
     @torch.no_grad()
     def normalize_decoder_weights(self):

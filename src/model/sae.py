@@ -29,11 +29,13 @@ class SparseAutoEncoder(nn.Module):
         metrics = {
             "loss/total": loss.item(),
             "loss/mse": mse_loss.item(),
-            "loss/l1": l1.item(),
-            "metrics/l0": (f > 0).float().sum(dim=-1).mean().item(),
+            "loss/l1": l1_loss.item(),
+            "metrics/l0": (features > 0).float().sum(dim=-1).mean().item(),
         }
 
-        return loss, metrics
+        feat = {'features': features}
+
+        return loss, metrics, x_hat, feat
 
     @torch.no_grad()
     def normalize_decoder_weights(self):
