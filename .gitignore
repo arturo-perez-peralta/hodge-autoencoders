@@ -1,0 +1,7 @@
+*__pycache__
+mlartifacts/
+mlruns/
+mlflow.db
+storage/
+src/storage/
+*.safetensors

@@ -12,6 +12,7 @@ class TwoDimensionalHodgeSparseAutoEncoder(nn.Module):
             latent_dim_2: int,
             reg_chain: float,
             reg_harm: float,
+            reg_boundary: float,
             l1_feat: list[float],
             l1_hole: float
             ):
@@ -24,10 +25,11 @@ class TwoDimensionalHodgeSparseAutoEncoder(nn.Module):
 
         self.reg_chain = reg_chain
         self.reg_harm = reg_harm
+        self.reg_boundary = reg_boundary
         self.l1_feat = l1_feat
         self.l1_hole = l1_hole
 
-        self.bias_dec = nn.Parameter(torch.zeros(input_dim))
+        self.b_dec = nn.Parameter(torch.zeros(input_dim))
 
         self.encoders = nn.ModuleDict({
             '0': nn.Linear(input_dim, latent_dim_0),

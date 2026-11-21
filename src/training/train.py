@@ -8,8 +8,8 @@ import mlflow
 import logging
 import logging_loki
 
-from src.model.hodge_sae import TwoDimensionalHodgeSparseAutoEncoder, HodgeSparseAutoEncoder
-from src.model.sae import SparseAutoEncoder
+from src.hodge_sae.model.hodge_sae import TwoDimensionalHodgeSparseAutoEncoder, HodgeSparseAutoEncoder
+from src.hodge_sae.model.sae import SparseAutoEncoder
 
 mlflow.set_tracking_uri(os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000"))
 mlflow.set_experiment("hodge-sae-experiments")
@@ -46,6 +46,7 @@ config = {
         "expansion_factors": [6, 3, 1],
         "reg_chain": 1e-3,
         "reg_harm": 1e-3,
+        "reg_boundary": 1e-3,
         "l1_feat": [1e-3, 1e-3],
         "l1_hole": 1e-3,
     },
@@ -70,7 +71,7 @@ def get_token_batch(data_iter, batch_size, seq_len):
     return tokens
 
 MODEL_REGISTRY = {
-    "sae": StandardSAE,
+    "sae": SparseAutoEncoder,
     "hodge2d": TwoDimensionalHodgeSparseAutoEncoder,
     "hodge": HodgeSparseAutoEncoder,
 }
@@ -82,30 +83,36 @@ def build_model(model_cfg: dict, input_dim: int) -> torch.nn.Module:
 
 def main(cfg: dict):
 
-    sae = build_model(config["model"], input_dim=D_IN).to(device)
+    dataset = cfg['train']['dataset']
+    batch_size = cfg['train']['batch_size']
+    seq_length = cfg['train']['seq_length']
+    total_tokens = cfg['train']['total_tokens']
+    buffer_batches = cfg['train']['buffer_batches']
+    
+
+    sae = build_model(config["model"], input_dim=D_IN).to(DEVICE)
     optimizer = torch.optim.Adam(sae.parameters(), lr=3e-4)
 
 
-
-    dataset = load_dataset(DATASET, split="train", streaming=True)
+    dataset = load_dataset(dataset, split="train", streaming=True)
 
     data_iter = iter(dataset)
-    tokens = get_token_batch(data_iter, batch_size=BATCH_SIZE, seq_len=SEQ_LENGTH)
+    tokens = get_token_batch(data_iter, batch_size=batch_size, seq_len=seq_length)
     tokens_seen = 0
 
-    while tokens_seen < TOTAL_TOKENS:
+    while tokens_seen < total_tokens:
         # 1. Llenar el buffer acumulando activaciones sin gradientes
         buffer = []
         with torch.no_grad():
-            for _ in range(BUFFER_BATCHES):
-                tokens = get_token_batch(data_iter, batch_size=BATCH_SIZE, seq_len=SEQ_LENGTH)
-                _, cache = MODEL.run_with_cache(
+            for _ in range(buffer_batches):
+                tokens = get_token_batch(data_iter, batch_size=batch_size, seq_len=seq_length)
+                _, cache = model.run_with_cache(
                     tokens,
-                    names_filter=lambda name: name == HOOK_NAME,
+                    names_filter=lambda name: name == hook_name,
                     stop_at_layer=1,
                 )
                 # Aplanar [batch, seq, d_mlp] -> [batch * seq, d_mlp]
-                acts = cache[HOOK_NAME].reshape(-1, D_IN)
+                acts = cache[hook_name].reshape(-1, D_IN)
                 buffer.append(acts)
 
         # Concatenar y mezclar (shuffle) todos los vectores del buffer
@@ -114,8 +121,8 @@ def main(cfg: dict):
         buffer = buffer[perm]
 
         # 2. Entrenar el SAE recorriendo el buffer mezclado
-        for i in range(0, buffer.shape[0], SAE_BATCH_SIZE):
-            batch = buffer[i : i + SAE_BATCH_SIZE]
+        for i in range(0, buffer.shape[0], sae_batch_size):
+            batch = buffer[i : i + sae_batch_size]
 
             loss, metrics, x_hat, features = sae.compute_loss(batch)
 
