@@ -10,9 +10,8 @@ from torch import Tensor, nn
 
 @dataclass
 class SAEOutput:
-    x_hat: Float[Tensor, "batch d_in"] 
-    features: Tensor | list[Tensor]
-    aux: dict[str, Any] = field(default_factory = dict)
+    x_hat: Float[Tensor, "batch d_in"]
+    features: dict[str, Any] | Tensor | list[Tensor] = field(default_factory = dict)
 
 @dataclass
 class LossOutput:
@@ -30,7 +29,10 @@ class BaseSparseAutoEncoder(ABC, nn.Module):
     def compute_loss(
         self,
         x: Float[Tensor, "batch d_in"],
-        x_hat: Float[Tensor, "batch d_in"],
         output: SAEOutput
     ) -> LossOutput:
+        ...
+
+    @abstractmethod
+    def normalize_decoder_weights(self) -> None: 
         ...

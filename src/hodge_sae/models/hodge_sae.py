@@ -2,7 +2,11 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-class TwoDimensionalHodgeSparseAutoEncoder(nn.Module):
+from src.hodge_sae.models.base import BaseSparseAutoEncoder, SAEOutput, LossOutput
+
+
+
+class TwoDimensionalHodgeSparseAutoEncoder(BaseSparseAutoEncoder):
 
     def __init__(
             self,
@@ -47,7 +51,7 @@ class TwoDimensionalHodgeSparseAutoEncoder(nn.Module):
         })
         self.normalize_decoder_weights()
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> SAEOutput:
 
         x_cent = x - self.b_dec
         
@@ -58,7 +62,7 @@ class TwoDimensionalHodgeSparseAutoEncoder(nn.Module):
         
         f1 = holes + self.boundaries['0'](f0) + self.boundaries['2'](f2)
 
-        features = [f0, f1, f2]
+        feat = [f0, f1, f2]
 
         x_hat = (
             self.decoders['0'](f0)
@@ -67,7 +71,9 @@ class TwoDimensionalHodgeSparseAutoEncoder(nn.Module):
             + self.b_dec
         )
 
-        return x_hat, features, holes
+        features = {"features": feat, "holes": holes, "z": [f0, f2]}
+
+        return SAEOutput(x_hate = x_hat, features = features)
 
     def compute_topological_losses(self, holes: torch.Tensor):
         # \partial_1
@@ -86,13 +92,14 @@ class TwoDimensionalHodgeSparseAutoEncoder(nn.Module):
 
         return chain_loss, harmonic_loss
 
-    def compute_loss(self, x: torch.Tensor):
-        x_hat, features, holes = self(x)
+    def compute_loss(self, x: torch.Tensor, output: SAEOutput) -> LossOutput:
+        x_hat = SAEOutput.x_hat, features = output.features
+        holes = features['holes']
         chain_loss, harm_loss = self.compute_topological_losses(holes)
 
         mse_loss = F.mse_loss(x_hat, x)
 
-        f0, f2 = features[0], features[2]
+        f0, f2 = features['features'][0], features['features'][2]
 
         l1_f0_raw = f0.abs().sum(dim=-1).mean()
         l1_f2_raw = f2.abs().sum(dim=-1).mean()
@@ -134,20 +141,17 @@ class TwoDimensionalHodgeSparseAutoEncoder(nn.Module):
             "l1/hole_dim_1": l1_hole_raw.item(),
         }
 
-        feat = {"features": features, "holes": holes, "z": [f0, f2]}
-
-        return loss, metrics, x_hat, feat
+        return LossOutput(loss=loss, metrics=metrics)
 
     @torch.no_grad()
-    def normalize_decoder_weights(self):
+    def normalize_decoder_weights(self) -> None:
         for _, decoder in self.decoders.items():
             decoder.weight.data = F.normalize(decoder.weight.data, p=2, dim=0)
         for boundary in self.boundaries.values():
             boundary.weight.data = F.normalize(boundary.weight.data, p=2, dim=0)
 
 
-
-class HodgeSparseAutoEncoder(nn.Module):
+class HodgeSparseAutoEncoder(BaseSparseAutoEncoder):
     def __init__(
             self,
             input_dim: int,
@@ -199,20 +203,22 @@ class HodgeSparseAutoEncoder(nn.Module):
             out[k + 1] = out[k + 1] + F.linear(v_list[k], d.T)
         return out
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> SAEOutput:
         x_cent = x - self.b_dec
 
         z = [F.relu(enc(x_cent)) for enc in self.z_encoders]
         holes = [F.relu(enc(x_cent)) for enc in self.harm_encoders]
 
         bz = self.apply_dirac(z)
-        features = [bz_k + h_k for bz_k, h_k in zip(bz, holes)]
+        feat = [bz_k + h_k for bz_k, h_k in zip(bz, holes)]
 
-        x_hat = sum(dec(f_k) for dec, f_k in zip(self.decoders, features)) + self.b_dec
+        x_hat = sum(dec(f_k) for dec, f_k in zip(self.decoders, feat)) + self.b_dec
 
-        return x_hat, features, holes, z
+        features = {'features': features, 'holes': holes, 'z': z}
 
-    def compute_topological_losses(self, holes: list[torch.Tensor]):
+        return SAEOutput(x_hat = x_hat, features = features)
+
+    def compute_topological_losses(self, holes: list[torch.Tensor]) -> list[torch.Tensor]:
         if len(self.boundaries) > 1:
             chain_loss = sum(
                 torch.norm(self.boundaries[k] @ self.boundaries[k + 1], p='fro') ** 2
@@ -229,9 +235,14 @@ class HodgeSparseAutoEncoder(nn.Module):
 
         return chain_loss, harmonic_loss
 
-    def compute_loss(self, x: torch.Tensor):
+    def compute_loss(self, x: torch.Tensor, output: SAEOutput) -> LossOutput:
 
-        x_hat, features, holes, z = self(x)
+        x_hat = output.x_hat
+        features = output.features
+        feat = features['features']
+        holes = features['holes']
+        z = features['z']
+
         chain_loss, harm_loss = self.compute_topological_losses(holes)
 
         mse_loss = F.mse_loss(x_hat, x)
@@ -274,9 +285,7 @@ class HodgeSparseAutoEncoder(nn.Module):
             metrics[f"l1/z_dim_{k}"] = l1_z_raw[k].item()
             metrics[f"l1/hole_dim_{k}"] = l1_hole_raw[k].item()
 
-        feat = {"features": features, "holes": holes, "z": z}
-
-        return loss, metrics, x_hat, feat
+        return LossOutput(loss=loss, metrics=metrics)
 
     @torch.no_grad()
     def normalize_decoder_weights(self):

@@ -2,7 +2,9 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-class SparseAutoEncoder(nn.Module):
+from src.hodge_sae.models.base import BaseSparseAutoEncoder, SAEOutput, LossOutput
+
+class SparseAutoEncoder(BaseSparseAutoEncoder):
 
     def __init__(self, input_dim: int, dict_size: int, l1_pen: float = 1e-3):
         super().__init__() 
@@ -13,13 +15,14 @@ class SparseAutoEncoder(nn.Module):
         self.l1_pen = l1_pen
         self.normalize_decoder_weights()
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> SAEOutput:
         features = F.relu(self.encoder(x - self.decoder.bias))
         x_hat = self.decoder(features)
-        return x_hat, features
+        return SAEOutput(x_hat = x_hat, features = features)
 
-    def loss(self, x: torch.Tensor):
-        x_hat, features = self(x)
+    def loss(self, x: torch.Tensor, output: SAEOutput) -> LossOutput:
+        x_hat = output.x_hat
+        features = output.features
 
         mse_loss = F.mse_loss(x_hat, x)
         l1_loss = self.l1_pen * features.abs().sum(dim=-1).mean()
@@ -33,9 +36,7 @@ class SparseAutoEncoder(nn.Module):
             "metrics/l0": (features > 0).float().sum(dim=-1).mean().item(),
         }
 
-        feat = {'features': features}
-
-        return loss, metrics, x_hat, feat
+        return LossOutput(loss=loss, metrics=metrics)
 
     @torch.no_grad()
     def normalize_decoder_weights(self):
