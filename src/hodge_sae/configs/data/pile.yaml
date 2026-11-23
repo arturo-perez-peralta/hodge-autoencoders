@@ -1,0 +1,4 @@
+_target_: src.hodge_sae.datasets.arithmetic.ArithmeticDataLoader
+hook_name: "blocks.0.mlp.hook_post"
+batch_size: 256
+checkpoint_idx: 400

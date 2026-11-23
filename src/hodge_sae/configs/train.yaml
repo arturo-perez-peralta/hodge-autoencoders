@@ -1,0 +1,20 @@
+defaults:
+  - model: hodge_2d        
+  - data: pile_online      
+  - _self_                 
+
+seed: 42
+device: cuda
+
+train:
+  lr: 3e-4
+  steps: 50000
+  log_every: 100
+
+mlflow:
+  tracking_uri: "sqlite:///mlflow.db"
+  experiment_name: "hodge_sae_main"
+
+hydra:
+  job:
+    chdir: false

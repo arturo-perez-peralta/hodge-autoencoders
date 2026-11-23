@@ -1,0 +1,9 @@
+_target_: src.hodge_sae.models.hodge_2d.TwoDimensionalHodgeSparseAutoEncoder
+latent_dim_0: 4096
+latent_dim_1: 2048
+latent_dim_2: 1024
+reg_chain: 1e-3
+reg_harm: 1e-3
+reg_boundary: 1e-3
+l1_feat: [1e-3, 1e-3]
+l1_hole: 1e-4
